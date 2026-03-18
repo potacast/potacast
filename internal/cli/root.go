@@ -19,13 +19,8 @@ func Execute(v string) {
 	root.AddCommand(newPullCmd())
 	root.AddCommand(newListCmd())
 	root.AddCommand(newRunCmd())
-	root.AddCommand(newStopCmd())
+	root.AddCommand(newServerCmd())
 	root.AddCommand(newRmCmd())
-
-	serveCmd := newRunCmd()
-	serveCmd.Use = "serve"
-	serveCmd.Short = "Start the server (alias for run)"
-	root.AddCommand(serveCmd)
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

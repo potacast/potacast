@@ -26,11 +26,17 @@ potacast pull bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_K_M
 # List downloaded models
 potacast list
 
-# Start the server (OpenAI-compatible API at http://127.0.0.1:8080)
+# Start interactive chat (starts server in background if needed)
 potacast run
 
+# Or run with a specific model
+potacast run bartowski/Llama-3.2-1B-Instruct-GGUF
+
+# Start the server in background (OpenAI API at http://127.0.0.1:8080)
+potacast server start
+
 # Stop the server
-potacast stop
+potacast server stop
 ```
 
 ## Commands
@@ -39,9 +45,9 @@ potacast stop
 |---------|-------------|
 | `potacast pull <model-id>` | Download a GGUF model from Hugging Face |
 | `potacast list` | List downloaded models |
-| `potacast run` | Start llama-server (router mode, multi-model) |
-| `potacast serve` | Alias for `run` |
-| `potacast stop` | Stop the server |
+| `potacast run [model]` | Interactive chat in terminal (like ollama run) |
+| `potacast server start` | Start the API server in background |
+| `potacast server stop` | Stop the server |
 | `potacast rm <model>` | Remove a downloaded model |
 
 ## Model ID Format
@@ -58,6 +64,28 @@ Optional config at `~/.config/potacast/config.yaml`:
 host: "127.0.0.1"
 port: 8080
 ctx: 4096
+parallel: -1      # concurrent slots, -1 = auto
+threads: -1       # CPU threads, -1 = auto
+batch_size: 2048
+n_predict: -1     # max tokens to generate, -1 = unlimited
+cache_ram: 8192   # KV cache MiB
+embeddings: true  # enable chat + embedding models (default: true)
+```
+
+Server parameters can also be overridden via CLI flags:
+
+```bash
+potacast server start --parallel 4 --ctx 8192
+```
+
+Chat and embedding models are both supported by default. To disable embedding models, use `--embeddings=false` or set `embeddings: false` in config.yaml.
+
+### Logs (journalctl)
+
+On Linux, `potacast server start` runs via systemd so logs are available:
+
+```bash
+journalctl --user -u potacast-server -f
 ```
 
 ## Gated Models

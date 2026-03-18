@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -145,7 +146,7 @@ func EnsureLlamaServer() (string, error) {
 	}
 
 	// Download tarball
-	fmt.Fprintln(os.Stderr, "Downloading llama-server...")
+	fmt.Fprintln(os.Stderr, "Preparing runtime...")
 	dlResp, err := http.Get(downloadURL)
 	if err != nil {
 		return "", err
@@ -206,27 +207,100 @@ func EnsureLlamaServer() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("llama-server not found after extraction: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "llama-server ready at", binPath)
 	return binPath, nil
 }
 
-// Start launches llama-server in router mode.
-func Start(cfg *config.Config) error {
-	binPath, err := EnsureLlamaServer()
-	if err != nil {
-		return err
-	}
-
+// buildServerArgs returns llama-server arguments from config.
+func buildServerArgs(cfg *config.Config) ([]string, error) {
 	modelsDir := paths.ModelsDir()
 	if err := paths.EnsureDir(modelsDir); err != nil {
-		return err
+		return nil, err
 	}
-
 	args := []string{
 		"--models-dir", modelsDir,
 		"--host", cfg.Host,
 		"--port", fmt.Sprintf("%d", cfg.Port),
-		"--ctx-size", fmt.Sprintf("%d", cfg.Ctx),
+	}
+	if cfg.Ctx > 0 {
+		args = append(args, "--ctx-size", fmt.Sprintf("%d", cfg.Ctx))
+	}
+	if cfg.Parallel != 0 {
+		args = append(args, "--parallel", fmt.Sprintf("%d", cfg.Parallel))
+	}
+	if cfg.Threads != 0 {
+		args = append(args, "--threads", fmt.Sprintf("%d", cfg.Threads))
+	}
+	if cfg.BatchSize > 0 {
+		args = append(args, "--batch-size", fmt.Sprintf("%d", cfg.BatchSize))
+	}
+	if cfg.NPredict != 0 {
+		args = append(args, "--n-predict", fmt.Sprintf("%d", cfg.NPredict))
+	}
+	if cfg.CacheRAM > 0 {
+		args = append(args, "--cache-ram", fmt.Sprintf("%d", cfg.CacheRAM))
+	}
+	if cfg.Embeddings {
+		args = append(args, "--embeddings")
+	}
+	return args, nil
+}
+
+// StartBackground launches llama-server in router mode in the background.
+// All llama.cpp output is suppressed (redirected to devnull).
+func StartBackground(cfg *config.Config) error {
+	binPath, err := EnsureLlamaServer()
+	if err != nil {
+		return err
+	}
+	args, err := buildServerArgs(cfg)
+	if err != nil {
+		return err
+	}
+
+	binDir := filepath.Dir(binPath)
+	cmd := exec.Command(binPath, args...)
+	cmd.Dir = binDir
+	env := os.Environ()
+	if runtime.GOOS == "darwin" {
+		env = append(env, "DYLD_LIBRARY_PATH="+binDir)
+	} else {
+		env = append(env, "LD_LIBRARY_PATH="+binDir)
+	}
+	cmd.Env = env
+
+	// Suppress all llama.cpp output
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("open devnull: %w", err)
+	}
+	defer devNull.Close()
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+	cmd.Stdin = nil
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	pidFile := paths.PIDFile()
+	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644); err != nil {
+		cmd.Process.Kill()
+		return err
+	}
+
+	return nil
+}
+
+// StartForeground launches llama-server in the foreground. Output goes to stdout/stderr
+// so it can be captured by systemd (journalctl). Blocks until the process exits.
+func StartForeground(cfg *config.Config) error {
+	binPath, err := EnsureLlamaServer()
+	if err != nil {
+		return err
+	}
+	args, err := buildServerArgs(cfg)
+	if err != nil {
+		return err
 	}
 
 	binDir := filepath.Dir(binPath)
@@ -241,7 +315,7 @@ func Start(cfg *config.Config) error {
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
+	cmd.Stdin = nil
 
 	if err := cmd.Start(); err != nil {
 		return err
@@ -253,7 +327,19 @@ func Start(cfg *config.Config) error {
 		return err
 	}
 
-	return cmd.Wait()
+	// Forward SIGTERM/SIGINT to child so systemd stop works cleanly
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		sig := <-sigCh
+		if cmd.Process != nil {
+			cmd.Process.Signal(sig)
+		}
+	}()
+
+	err = cmd.Wait()
+	os.Remove(pidFile) // clean up so IsRunning() is accurate
+	return err
 }
 
 // Stop kills the running llama-server.
