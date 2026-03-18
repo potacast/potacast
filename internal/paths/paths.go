@@ -45,6 +45,16 @@ func PIDFile() string {
 	return filepath.Join(BaseDir(), "llama-server.pid")
 }
 
+// LogFile returns the path to the llama-server log file (for non-Linux background mode).
+func LogFile() string {
+	return filepath.Join(BaseDir(), "logs", "llama-server.log")
+}
+
+// ExportsDir returns the directory for exported model archives.
+func ExportsDir() string {
+	return filepath.Join(BaseDir(), "exports")
+}
+
 // ConfigFile returns the path to the config file.
 func ConfigFile() string {
 	return filepath.Join(ConfigDir(), "config.yaml")

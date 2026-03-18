@@ -20,6 +20,7 @@ func newServerCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newServerStartCmd())
 	cmd.AddCommand(newServerStopCmd())
+	cmd.AddCommand(newServerStatusCmd())
 	return cmd
 }
 
@@ -37,6 +38,7 @@ func newServerStartCmd() *cobra.Command {
 	cmd.Flags().Int("cache-ram", 0, "KV cache size in MiB")
 	cmd.Flags().Bool("embeddings", true, "enable chat and embedding models (default: true)")
 	cmd.Flags().Bool("foreground", false, "run in foreground (internal use by systemd)")
+	cmd.Flags().Bool("log-file", false, "write server logs to file (default on non-Linux)")
 	return cmd
 }
 
@@ -86,7 +88,8 @@ func runServerStart(cmd *cobra.Command, args []string) error {
 		// Fall through to background mode if systemd-run fails
 	}
 
-	if err := server.StartBackground(cfg); err != nil {
+	useLogFile := cmd.Flags().Changed("log-file") || runtime.GOOS != "linux"
+	if err := server.StartBackground(cfg, useLogFile); err != nil {
 		return err
 	}
 
@@ -178,5 +181,37 @@ func runServerStop(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("Server stopped.")
+	return nil
+}
+
+func newServerStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show server status",
+		RunE:  runServerStatus,
+	}
+}
+
+func runServerStatus(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	if !server.IsRunning() {
+		fmt.Println("Status: stopped")
+		fmt.Printf("Port: %d (from config)\n", cfg.Port)
+		return nil
+	}
+
+	pid, err := server.GetPID()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Status: running")
+	fmt.Printf("Port: %d\n", cfg.Port)
+	fmt.Printf("PID: %d\n", pid)
+	fmt.Printf("API: http://%s:%d/v1\n", cfg.Host, cfg.Port)
 	return nil
 }

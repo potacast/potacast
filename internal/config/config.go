@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/potacast/potacast/internal/paths"
 	"gopkg.in/yaml.v3"
@@ -63,6 +64,16 @@ func Load() (*Config, error) {
 	}
 	if cfg.Ctx == 0 {
 		cfg.Ctx = Default().Ctx
+	}
+
+	// Environment variable overrides
+	if v := os.Getenv("POTACAST_HOST"); v != "" {
+		cfg.Host = v
+	}
+	if v := os.Getenv("POTACAST_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 {
+			cfg.Port = p
+		}
 	}
 
 	return cfg, nil

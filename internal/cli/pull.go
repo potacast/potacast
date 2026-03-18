@@ -13,7 +13,7 @@ func newPullCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "pull [model-id]",
 		Short: "Download a GGUF model from Hugging Face",
-		Long:  "Download a GGUF model. Format: org/model, org/model:Q4_K_M, or org/model:filename.gguf",
+		Long:  "Download a GGUF model. Format: org/model, org/model:Q4_K_M, org/model:branch, or org/model:branch:Q4_K_M",
 		Args:  cobra.ExactArgs(1),
 		RunE:  runPull,
 	}

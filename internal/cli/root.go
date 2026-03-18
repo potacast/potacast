@@ -18,9 +18,15 @@ func Execute(v string) {
 
 	root.AddCommand(newPullCmd())
 	root.AddCommand(newListCmd())
+	root.AddCommand(newPsCmd())
 	root.AddCommand(newRunCmd())
 	root.AddCommand(newServerCmd())
 	root.AddCommand(newRmCmd())
+	root.AddCommand(newConfigCmd())
+	root.AddCommand(newSearchCmd())
+	root.AddCommand(newInfoCmd())
+	root.AddCommand(newExportCmd())
+	root.AddCommand(newImportCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

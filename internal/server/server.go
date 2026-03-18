@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -245,9 +246,23 @@ func buildServerArgs(cfg *config.Config) ([]string, error) {
 	return args, nil
 }
 
+// CheckPortAvailable returns an error if the configured host:port is already in use.
+func CheckPortAvailable(cfg *config.Config) error {
+	addr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("port %d is already in use or not accessible: %w", cfg.Port, err)
+	}
+	ln.Close()
+	return nil
+}
+
 // StartBackground launches llama-server in router mode in the background.
-// All llama.cpp output is suppressed (redirected to devnull).
-func StartBackground(cfg *config.Config) error {
+// If useLogFile is true (e.g. on non-Linux or when --log-file is set), output goes to a log file.
+func StartBackground(cfg *config.Config, useLogFile bool) error {
+	if err := CheckPortAvailable(cfg); err != nil {
+		return err
+	}
 	binPath, err := EnsureLlamaServer()
 	if err != nil {
 		return err
@@ -268,14 +283,30 @@ func StartBackground(cfg *config.Config) error {
 	}
 	cmd.Env = env
 
-	// Suppress all llama.cpp output
-	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-	if err != nil {
-		return fmt.Errorf("open devnull: %w", err)
+	var stdout, stderr io.Writer
+	if useLogFile {
+		logPath := paths.LogFile()
+		if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+			return fmt.Errorf("create log dir: %w", err)
+		}
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return fmt.Errorf("open log file: %w", err)
+		}
+		defer logFile.Close()
+		stdout = logFile
+		stderr = logFile
+	} else {
+		devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+		if err != nil {
+			return fmt.Errorf("open devnull: %w", err)
+		}
+		defer devNull.Close()
+		stdout = devNull
+		stderr = devNull
 	}
-	defer devNull.Close()
-	cmd.Stdout = devNull
-	cmd.Stderr = devNull
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.Stdin = nil
 
 	if err := cmd.Start(); err != nil {
@@ -294,6 +325,9 @@ func StartBackground(cfg *config.Config) error {
 // StartForeground launches llama-server in the foreground. Output goes to stdout/stderr
 // so it can be captured by systemd (journalctl). Blocks until the process exits.
 func StartForeground(cfg *config.Config) error {
+	if err := CheckPortAvailable(cfg); err != nil {
+		return err
+	}
 	binPath, err := EnsureLlamaServer()
 	if err != nil {
 		return err
@@ -373,15 +407,26 @@ func Stop() error {
 
 // IsRunning returns true if the server appears to be running.
 func IsRunning() bool {
+	_, err := GetPID()
+	return err == nil
+}
+
+// GetPID returns the server PID if running, or an error if not.
+func GetPID() (int, error) {
 	pidFile := paths.PIDFile()
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
-		return false
+		if os.IsNotExist(err) {
+			return 0, fmt.Errorf("server not running (no PID file)")
+		}
+		return 0, err
 	}
 	var pid int
 	if _, err := fmt.Sscanf(string(data), "%d", &pid); err != nil {
-		return false
+		return 0, fmt.Errorf("invalid PID file: %w", err)
 	}
-	// Signal 0 checks process existence without killing
-	return syscall.Kill(pid, 0) == nil
+	if syscall.Kill(pid, 0) != nil {
+		return 0, fmt.Errorf("server not running (process %d not found)", pid)
+	}
+	return pid, nil
 }

@@ -2,6 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"sort"
+	"text/tabwriter"
 
 	"github.com/potacast/potacast/internal/models"
 	"github.com/potacast/potacast/internal/paths"
@@ -9,11 +12,13 @@ import (
 )
 
 func newListCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List downloaded models",
 		RunE:  runList,
 	}
+	cmd.Flags().String("sort", "name", "sort by: name, size, mtime")
+	return cmd
 }
 
 func runList(cmd *cobra.Command, args []string) error {
@@ -31,10 +36,34 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println("NAME")
-	fmt.Println("----")
-	for _, m := range localModels {
-		fmt.Println(m.ID)
+	sortBy, _ := cmd.Flags().GetString("sort")
+	switch sortBy {
+	case "name":
+		sort.Slice(localModels, func(i, j int) bool { return localModels[i].ID < localModels[j].ID })
+	case "size":
+		sort.Slice(localModels, func(i, j int) bool { return localModels[i].Size > localModels[j].Size })
+	case "mtime":
+		sort.Slice(localModels, func(i, j int) bool { return localModels[i].Mtime.After(localModels[j].Mtime) })
 	}
-	return nil
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tSIZE")
+	fmt.Fprintln(tw, "----\t----")
+	for _, m := range localModels {
+		fmt.Fprintf(tw, "%s\t%s\n", m.ID, formatSize(m.Size))
+	}
+	return tw.Flush()
+}
+
+func formatSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for n >= div {
+		n /= div
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n), "KMGTPE"[exp])
 }
